@@ -1,0 +1,8 @@
+# Build products
+.build/
+build/
+*.dmg
+Clamshelled.app/
+
+# macOS
+.DS_Store

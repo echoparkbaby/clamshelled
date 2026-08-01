@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- LaunchDaemon for Clamshelled's privileged helper.
+     Installed at Contents/Library/LaunchDaemons/ inside the app bundle and
+     registered with SMAppService.daemon(plistName:). Runs as root, on demand. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.brandon.clamshelled.helper</string>
+
+    <!-- Path is relative to the app bundle. -->
+    <key>BundleProgram</key>
+    <string>Contents/MacOS/ClamshelledHelper</string>
+
+    <!-- Vends the Mach service the app connects to; launchd starts it on demand. -->
+    <key>MachServices</key>
+    <dict>
+        <key>com.brandon.clamshelled.helper</key>
+        <true/>
+    </dict>
+
+    <!-- Makes System Settings show this under the Clamshelled app rather than a
+         bare label, so the approval prompt is intelligible. -->
+    <key>AssociatedBundleIdentifiers</key>
+    <array>
+        <string>com.brandon.clamshelled</string>
+    </array>
+</dict>
+</plist>
