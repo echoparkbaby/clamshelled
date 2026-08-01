@@ -1,6 +1,6 @@
 # Clamshelled
 
-**[Download](https://github.com/echoparkbaby/clamshelled/releases/latest)** ·
+**[Download](https://github.com/echoparkbaby/clamshelled/releases/download/v1.0.0-rc1/Clamshelled-1.0RC1.dmg)** ·
 **[clamshelled website](https://echoparkbaby.github.io/clamshelled/)**
 
 A macOS menu-bar app (menulet) that toggles **clamshell / lid-closed sleep** on
