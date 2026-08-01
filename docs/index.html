@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Clamshelled — keep your MacBook awake with the lid closed</title>
+<meta name="description" content="A tiny macOS menu-bar app that keeps your MacBook awake with the lid closed. No external display or charger required. Free, signed and notarized.">
+<link rel="icon" href="icon.png">
+<meta property="og:title" content="Clamshelled">
+<meta property="og:description" content="Keep your MacBook awake with the lid closed. A tiny, free macOS menu-bar app.">
+<meta property="og:image" content="icon.png">
+<style>
+  :root{
+    --bg:#0b1417; --bg2:#101d21; --card:#14252a; --line:#20383f;
+    --fg:#eaf2f4; --muted:#9fb4ba; --accent:#38d39f; --accent2:#7ee6c1;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f6f9fa; --bg2:#fff; --card:#fff; --line:#dbe6e9;
+           --fg:#0e1c20; --muted:#5b7076; --accent:#0f9b74; --accent2:#0b7d5d; }
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:linear-gradient(180deg,var(--bg2),var(--bg) 60%);
+    color:var(--fg); font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:860px; margin:0 auto; padding:0 20px}
+  header{text-align:center; padding:72px 0 40px}
+  header img.app{width:132px;height:132px;border-radius:28px;box-shadow:0 18px 50px rgba(0,0,0,.42)}
+  h1{font-size:clamp(2.1rem,6vw,3rem); margin:22px 0 6px; letter-spacing:-.02em}
+  .tag{color:var(--muted); font-size:1.18rem; margin:0 auto; max-width:34ch}
+  .cta{display:flex; gap:12px; justify-content:center; flex-wrap:wrap; margin:30px 0 10px}
+  .btn{
+    display:inline-block; padding:13px 26px; border-radius:11px; text-decoration:none;
+    font-weight:600; background:var(--accent); color:#04231a; border:1px solid transparent;
+  }
+  .btn:hover{filter:brightness(1.08)}
+  .btn.ghost{background:transparent; color:var(--fg); border-color:var(--line)}
+  .fine{color:var(--muted); font-size:.87rem; margin-top:4px}
+  section{padding:34px 0; border-top:1px solid var(--line)}
+  h2{font-size:1.35rem; margin:0 0 14px; letter-spacing:-.01em}
+  p{margin:0 0 14px}
+  .states{display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:18px 0}
+  @media (max-width:560px){ .states{grid-template-columns:1fr} }
+  .state{background:var(--card); border:1px solid var(--line); border-radius:13px; padding:18px; display:flex; gap:14px; align-items:center}
+  .state img{width:30px;height:30px; flex:none}
+  @media (prefers-color-scheme: dark){ .state img{filter:invert(1)} }
+  .state b{display:block}
+  .state span{color:var(--muted); font-size:.9rem}
+  ul{margin:0 0 14px; padding-left:20px} li{margin:5px 0}
+  code{background:var(--card); border:1px solid var(--line); border-radius:6px; padding:1px 6px; font-size:.9em}
+  .note{background:var(--card); border:1px solid var(--line); border-left:3px solid var(--accent); border-radius:10px; padding:14px 16px; color:var(--muted)}
+  .note b{color:var(--fg)}
+  .shot{width:100%; border-radius:13px; border:1px solid var(--line); display:block; margin:6px 0 4px}
+  footer{padding:40px 0 70px; text-align:center; color:var(--muted); font-size:.9rem}
+  footer a{color:var(--accent2)}
+  a{color:var(--accent2)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <img class="app" src="icon.png" alt="Clamshelled app icon">
+  <h1>Clamshelled</h1>
+  <p class="tag">Keep your MacBook awake with the lid closed.</p>
+  <div class="cta">
+    <a class="btn" href="https://github.com/echoparkbaby/clamshelled/releases/latest">Download for macOS</a>
+    <a class="btn ghost" href="https://github.com/echoparkbaby/clamshelled">View source</a>
+  </div>
+  <p class="fine">Free · Universal (Apple silicon + Intel) · macOS 13 or later · Signed &amp; notarized</p>
+</header>
+
+<section>
+  <h2>What it does</h2>
+  <p>
+    Close the lid and your MacBook goes to sleep. Usually that's what you want — but not
+    when it's running a build, finishing a download, playing music through a speaker, or
+    sitting on a shelf doing a job.
+  </p>
+  <p>
+    macOS only keeps a closed MacBook awake if it's plugged in <em>and</em> attached to an
+    external display. Clamshelled removes that requirement: one click in the menu bar and
+    the lid stops mattering.
+  </p>
+  <div class="states">
+    <div class="state">
+      <img src="state-off.png" alt="Open laptop icon">
+      <div><b>Open laptop</b><span>Off — your Mac sleeps normally.</span></div>
+    </div>
+    <div class="state">
+      <img src="state-on.png" alt="Closed laptop icon">
+      <div><b>Closed laptop</b><span>On — stays awake, lid shut.</span></div>
+    </div>
+  </div>
+  <p>The icon always shows the current state, even if you change it from a terminal.</p>
+</section>
+
+<section>
+  <h2>Read this before you use it</h2>
+  <div class="note">
+    <p><b>While it's on, your Mac won't sleep at all</b> — not when idle, and not from the
+    Apple menu. That's what makes lid-closed mode work, but it also means more battery use,
+    and a closed laptop in a bag can get warm.</p>
+    <p style="margin:0">Turn it off when you're done. The setting is system-wide and survives a
+    restart, so Clamshelled asks before quitting while it's still on.</p>
+  </div>
+</section>
+
+<section>
+  <h2>Installing</h2>
+  <img class="shot" src="dmg.png" alt="The Clamshelled disk image, showing the app being dragged to the Applications folder">
+  <ul>
+    <li>Drag <b>Clamshelled</b> into <b>Applications</b> — it won't run from the disk image.</li>
+    <li>Open it, then choose <b>Install Privileged Helper…</b> from its menu.</li>
+    <li>Approve <b>Clamshelled</b> in System&nbsp;Settings → General → Login&nbsp;Items&nbsp;&amp;&nbsp;Extensions.</li>
+  </ul>
+  <p class="fine">That's the only setup. No Terminal, no password prompts afterwards.</p>
+</section>
+
+<section>
+  <h2>How it works</h2>
+  <p>
+    Changing sleep behaviour (<code>pmset -a disablesleep</code>) needs root. Rather than
+    asking you to paste a <code>sudo</code> rule into Terminal, Clamshelled installs a small
+    helper that macOS approves once, through its own UI.
+  </p>
+  <ul>
+    <li>The helper does exactly one thing: turn lid-closed sleep on or off. It can't run
+        anything else — the command and its arguments are fixed in the code.</li>
+    <li>The app and the helper each verify the other's Apple Developer ID signature, so no
+        other program can use the helper.</li>
+    <li>Nothing is written to <code>/etc</code>, and removing the helper restores normal
+        sleep first.</li>
+  </ul>
+  <p>It's about 700 lines of Swift, and all of it is <a href="https://github.com/echoparkbaby/clamshelled">on GitHub</a>.</p>
+</section>
+
+<section>
+  <h2>Support</h2>
+  <p>Clamshelled is free. If it saves you some hassle, a tip is always appreciated. I got kids!</p>
+  <p>
+    <a href="https://buymeacoffee.com/echoparkbaby">
+      <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="48">
+    </a>
+  </p>
+</section>
+
+<footer>
+  Made by Brandon Walter ·
+  <a href="https://github.com/echoparkbaby">@echoparkbaby</a> ·
+  <a href="https://github.com/echoparkbaby/clamshelled/blob/main/LICENSE">MIT</a>
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,11 +1,16 @@
 # Clamshelled
 
+**[Download](https://github.com/echoparkbaby/clamshelled/releases/latest)** ·
+**[clamshelled website](https://echoparkbaby.github.io/clamshelled/)**
+
 A macOS menu-bar app (menulet) that toggles **clamshell / lid-closed sleep** on
 and off, with a state indicator in the menu bar.
 
-- **ON**  → `sudo pmset -a disablesleep 1` — the Mac stays awake with the lid
+- **ON**  → `pmset -a disablesleep 1` — the Mac stays awake with the lid
   closed (no external display/power required).
-- **OFF** → `sudo pmset -a disablesleep 0` — normal behaviour restored.
+- **OFF** → `pmset -a disablesleep 0` — normal behaviour restored.
+
+The privileged call runs through a small root helper (see below), not `sudo`.
 
 > **What ON really does.** `disablesleep 1` disables *all* sleep, not just the
 > lid-closed kind: no idle sleep, and the Apple menu's Sleep item greys out.
@@ -98,3 +103,13 @@ Clamshelled.app/Contents/MacOS/clamshelled --self-test   # pmset parser checks
 ```
 
 Uses `precondition`, so the checks are live in the release binary too.
+
+## Support
+
+Clamshelled is free. If it saves you some hassle, a tip is always appreciated. I got kids!
+
+[<img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="48" />](https://buymeacoffee.com/echoparkbaby)
+
+## License
+
+MIT — see [LICENSE](LICENSE).
