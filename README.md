@@ -12,6 +12,34 @@ and off, with a state indicator in the menu bar.
 
 The privileged call runs through a small root helper (see below), not `sudo`.
 
+## Clicking it
+
+| Click | Does |
+|-------|------|
+| Click | Toggle lid-closed mode |
+| Option-click | Toggle **Keep Me Awake** |
+| Right-click / control-click | The menu |
+
+**Keep Me Awake** is a plain power assertion — the same mechanism `caffeinate`
+uses. It stops idle sleep while Clamshelled is running, needs no helper and no
+approval, and the kernel drops it the moment the app quits. The lid still has to
+stay open; only lid-closed mode covers a shut lid. While it's on, the menu-bar
+icon turns light orange (switchable in Settings).
+
+## Settings
+
+**Settings…** (⌘,) from the menu, or the menu-bar icon → right-click → Settings.
+
+- **Launch at login**
+- **Turn on Keep Me Awake when Clamshelled starts**
+- **Tint the menu-bar icon while Keep Me Awake is on**
+- **Turn off lid-closed mode automatically** — never / 1 / 2 / 4 / 8 hours. Lid-closed
+  mode is a system setting that survives a restart, so this is the backstop against a
+  laptop staying awake in a bag all night. The countdown is shown in the menu and the
+  tooltip, re-arms whenever the mode is switched on (including from a terminal), and
+  fires silently — there's usually nobody looking at the screen when it does.
+- Install/remove the **privileged helper**, plus version, author and links.
+
 > **What ON really does.** `disablesleep 1` disables *all* sleep, not just the
 > lid-closed kind: no idle sleep, and the Apple menu's Sleep item greys out.
 > That's what makes clamshell mode work, but it also means more battery use and
@@ -86,9 +114,12 @@ stale. The helper also exits after two minutes idle.
 
 - `Sources/clamshelled/` — the menu-bar app.
   - `main.swift` — entry point + CLI flags (`--self-test`, `--*-helper`).
-  - `AppController.swift` — `NSStatusItem`, menu, alerts, termination guard.
+  - `AppController.swift` — `NSStatusItem`, click routing, menu, alerts, auto-off,
+    termination guard.
   - `HelperClient.swift` — XPC to the root helper; registration + update logic.
   - `SleepState.swift` — unprivileged `pmset -g` read and its parser.
+  - `KeepAwake.swift` — the `IOPMAssertion` behind Keep Me Awake.
+  - `Settings.swift` / `SettingsWindow.swift` — preferences and the window.
 - `Sources/ClamshelledHelper/` — the root LaunchDaemon (one privileged method).
 - `Sources/ClamshelledShared/` — the XPC contract + code-signing requirements.
 - `helper/…​.plist` — LaunchDaemon plist, embedded at `Contents/Library/LaunchDaemons/`.

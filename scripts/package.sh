@@ -10,10 +10,10 @@ HELPER_ID="com.brandon.clamshelled.helper"   # pinned by the XPC requirement
 # Apple requires CFBundleShortVersionString to be numeric, period-separated —
 # non-numeric labels (e.g. "1.0RC1") are not. Keep the plist legal and carry any
 # display label in a separate key (shown in the menu) and in the DMG filename.
-VERSION="1.0.0"          # CFBundleShortVersionString (must stay numeric)
-VERSION_DISPLAY="1.0.0"  # what the menu shows
-DMG_SUFFIX="1.0.0"       # what the DMG file is called
-BUILD="2"                # CFBundleVersion — monotonic build number (integer)
+VERSION="1.1.0"          # CFBundleShortVersionString (must stay numeric)
+VERSION_DISPLAY="1.1.0"  # what the menu shows
+DMG_SUFFIX="1.1.0"       # what the DMG file is called
+BUILD="3"                # CFBundleVersion — monotonic build number (integer)
 # Signing identity. If SIGN_ID isn't provided, auto-detect a "Developer ID
 # Application" identity from the keychain — by its unique SHA-1 hash, so
 # duplicate certs with the same name don't cause an "ambiguous" error.

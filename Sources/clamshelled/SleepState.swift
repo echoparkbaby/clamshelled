@@ -38,10 +38,12 @@ func readDisableSleep() -> Bool? {
     return parseSleepDisabled(String(data: data, encoding: .utf8) ?? "")
 }
 
-/// `--self-test`: runnable check for the parser. Run with:
+/// `--self-test`: runnable checks for the parser and the Keep Me Awake assertion.
+/// Run with:
 ///   Clamshelled.app/Contents/MacOS/clamshelled --self-test
 /// Uses `precondition`, not `assert` — assertions are compiled out in release, so
 /// an assert-based check would pass vacuously in the shipped binary.
+@MainActor
 func runSelfTest() -> Never {
     let real = """
     System-wide power settings:
@@ -59,5 +61,15 @@ func runSelfTest() -> Never {
     precondition(parseSleepDisabled(" SleepDisabled banana") == nil, "unparseable → unknown")
     precondition(parseSleepDisabled("SleepDisabledExtra 1") == nil, "prefix must not match")
     print("✓ parseSleepDisabled: all checks passed")
+
+    // Real round trip against IOKit — catches bad assertion arguments, which is the
+    // only way KeepAwake can fail.
+    precondition(KeepAwake.isOn == false, "starts off")
+    precondition(KeepAwake.set(true), "IOKit refused the assertion")
+    precondition(KeepAwake.isOn, "should report on")
+    precondition(KeepAwake.set(true), "re-enabling is a no-op, not an error")
+    precondition(KeepAwake.set(false), "release failed")
+    precondition(KeepAwake.isOn == false, "should report off")
+    print("✓ KeepAwake: assertion create/release round trip passed")
     exit(0)
 }

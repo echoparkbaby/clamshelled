@@ -28,12 +28,30 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var pollTimer: Timer?
     /// true → sleep is disabled (Mac stays awake when the lid closes).
     private var isEnabled = false
+    /// The toggle is a round trip to a root daemon; a second click mid-flight would
+    /// compute its target from a stale value and undo the first one.
+    private var toggleInFlight = false
+    /// When lid-closed mode should switch itself back off. nil = never.
+    private var autoOffDeadline: Date?
+    private let settings = SettingsWindowController()
 
     // MARK: - Lifecycle
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Settings.registerDefaults()
+        settings.onChange = { [weak self] in self?.updateIcon() }
+        settings.onAutoOffChanged = { [weak self] in self?.armAutoOff(); self?.updateIcon() }
+        settings.onToggleLoginItem = { [weak self] in self?.toggleLoginItem() }
+        settings.onManageHelper = { [weak self] in self?.manageHelper() }
+        if Settings.keepAwakeAtLaunch { KeepAwake.set(true) }
+
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.imagePosition = .imageOnly
+        // No `statusItem.menu` — that would swallow every click into the menu.
+        // Left click toggles; right/control click pops the menu (see statusItemClicked).
+        statusItem.button?.target = self
+        statusItem.button?.action = #selector(statusItemClicked)
+        statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         refreshState()
         // Reflect changes made elsewhere (e.g. someone runs pmset in a terminal).
         pollTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
@@ -46,25 +64,108 @@ final class AppController: NSObject, NSApplicationDelegate {
     // MARK: - State
 
     private func refreshState() {
+        let was = isEnabled
         // Unknown state keeps the last known value rather than falsely showing "off".
         if let state = readDisableSleep() { isEnabled = state }
+        // Arm on any off→on transition, including one made from a terminal, and on
+        // finding it already on at launch — that's exactly the forgotten-overnight
+        // case the timer exists for.
+        if isEnabled && !was { armAutoOff() }
+        if !isEnabled { autoOffDeadline = nil }
+        fireAutoOffIfDue()
         updateIcon()
-        updateMenu()
     }
 
     // MARK: - Actions
 
+    /// Left click = toggle lid-closed mode. Option-click = Keep Me Awake.
+    /// Right (or control) click = the menu — control-click is the same gesture as
+    /// right-click on a trackpad, so both have to land here.
+    @objc private func statusItemClicked() {
+        let flags = NSApp.currentEvent?.modifierFlags ?? []
+        if NSApp.currentEvent?.type == .rightMouseUp || flags.contains(.control) {
+            showMenu()
+        } else if flags.contains(.option) {
+            toggleKeepAwake()
+        } else {
+            toggle()
+        }
+    }
+
+    @objc private func openSettings() {
+        settings.show()
+    }
+
+    // MARK: - Auto-off
+
+    /// Lid-closed mode is a system setting that survives a restart, so the failure
+    /// mode is a laptop cooking itself in a bag overnight. This is the backstop.
+    /// No Timer: the existing 5s poll already runs, and a deadline survives the
+    /// clock changes and sleep/wake cycles a scheduled timer doesn't.
+    private func armAutoOff() {
+        let minutes = Settings.autoOffMinutes
+        autoOffDeadline = (isEnabled && minutes > 0)
+            ? Date().addingTimeInterval(Double(minutes) * 60)
+            : nil
+    }
+
+    private func fireAutoOffIfDue() {
+        guard isEnabled, let deadline = autoOffDeadline, Date() >= deadline else { return }
+        autoOffDeadline = nil   // one shot; a failed attempt shouldn't loop every 5s
+        guard HelperClient.isEnabled, !toggleInFlight else { return }
+        toggleInFlight = true
+        Task {
+            let result = await HelperClient.setDisableSleep(false)
+            toggleInFlight = false
+            // Deliberately silent on failure: this fires unattended, often with the
+            // lid shut, so an alert nobody sees would just block the next attempt.
+            if !result.ok { NSLog("Clamshelled: auto-off failed: \(result.output)") }
+            refreshState()
+        }
+    }
+
+    /// "in 47 min" / "in 2 hr 5 min", or nil when nothing is scheduled.
+    private var autoOffSummary: String? {
+        guard let deadline = autoOffDeadline else { return nil }
+        let minutes = max(0, Int((deadline.timeIntervalSinceNow / 60).rounded(.up)))
+        if minutes < 60 { return "in \(minutes) min" }
+        let (hours, rest) = (minutes / 60, minutes % 60)
+        return rest == 0 ? "in \(hours) hr" : "in \(hours) hr \(rest) min"
+    }
+
+    /// Attach the menu just long enough to click it open. `performClick` runs the
+    /// menu's own tracking loop and returns once it closes, so detaching afterwards
+    /// is safe — and necessary, or the next left click would open the menu instead
+    /// of toggling.
+    private func showMenu() {
+        statusItem.menu = buildMenu()
+        statusItem.button?.performClick(nil)
+        statusItem.menu = nil
+    }
+
     @objc private func toggle() {
+        guard !toggleInFlight else { return }
         guard HelperClient.isEnabled else {
             presentHelperProblem(detail: "")
             return
         }
         let target = !isEnabled
+        toggleInFlight = true
         Task {
             let result = await HelperClient.setDisableSleep(target)
+            toggleInFlight = false
             if !result.ok { presentHelperProblem(detail: result.output) }
             refreshState()
         }
+    }
+
+    @objc private func toggleKeepAwake() {
+        guard KeepAwake.set(!KeepAwake.isOn) else {
+            presentError(title: "Couldn’t change Keep Me Awake",
+                         body: "macOS refused the power assertion. Try again, or restart Clamshelled.")
+            return
+        }
+        updateIcon()   // tooltip carries the state; the menu is rebuilt on next open
     }
 
     @objc private func toggleLoginItem() {
@@ -91,7 +192,6 @@ final class AppController: NSObject, NSApplicationDelegate {
             if alert.runModal() == .alertFirstButtonReturn {
                 SMAppService.openSystemSettingsLoginItems()
             }
-            updateMenu()
             return
         }
         do {
@@ -109,7 +209,6 @@ final class AppController: NSObject, NSApplicationDelegate {
             NSApp.activate(ignoringOtherApps: true)
             alert.runModal()
         }
-        updateMenu()
     }
 
     @objc private func showAbout() {
@@ -119,9 +218,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         Keeps your Mac awake while the lid is closed — no external display or \
         charger required.
 
-        Turn it on before you shut the lid; turn it off when you’re done. The \
-        menu-bar icon shows a closed MacBook while it’s active, an open one when \
-        your Mac sleeps normally.
+        Click the menu-bar icon to turn it on or off; right-click for this menu. \
+        The icon shows a closed MacBook while it’s active, an open one when your \
+        Mac sleeps normally.
+
+        “Keep Me Awake” is the milder option: it stops your Mac idling to sleep \
+        while Clamshelled is running, but the lid still has to stay open, and it \
+        ends when you quit.
 
         Heads up: while it’s on, your Mac won’t sleep at all — not on idle, and not \
         from the Apple menu. That uses more battery and the machine can get warm in \
@@ -221,11 +324,9 @@ final class AppController: NSObject, NSApplicationDelegate {
             try HelperClient.register()
         } catch {
             presentHelperProblem(detail: error.localizedDescription)
-            updateMenu()
             return
         }
         if HelperClient.status == .requiresApproval { presentApprovalNeeded() }
-        updateMenu()
     }
 
     private func presentHelperInstalled() {
@@ -353,7 +454,6 @@ final class AppController: NSObject, NSApplicationDelegate {
                     presentError(title: "Couldn’t reinstall the helper",
                                  body: error.localizedDescription)
                 }
-                updateMenu()
             }
 
         default:
@@ -378,9 +478,16 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard let button = statusItem.button else { return }
         // ON = lid-closed stay-awake → CLOSED (clamshelled) MacBook. OFF → open one.
         let asset = isEnabled ? "clamshell-closed-template-36" : "clamshell-open-template-36"
-        let label = isEnabled ? "Clamshelled: Mac staying awake"
+        var label = isEnabled ? "Clamshelled: Mac staying awake"
                               : "Clamshelled: Mac sleeps normally"
-        button.image = Self.menuBarImage(named: asset, label: label)
+        if KeepAwake.isOn { label += ", Keep Me Awake on" }
+        // Colour is a second axis on the same two shapes: shape = lid-closed mode,
+        // tint = Keep Me Awake. Never the only cue — the label and menu say it too.
+        let onDarkBar = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        let tint = (KeepAwake.isOn && Settings.tintWhenKeepAwake)
+            ? (onDarkBar ? Self.tintOnDarkBar : Self.tintOnLightBar)
+            : nil
+        button.image = Self.menuBarImage(named: asset, label: label, tint: tint)
             ?? NSImage(systemSymbolName: isEnabled ? "zzz" : "laptopcomputer",
                        accessibilityDescription: label)
         // Never let a missing asset leave a blank, zero-width, unclickable item —
@@ -389,34 +496,62 @@ final class AppController: NSObject, NSApplicationDelegate {
         button.imagePosition = (button.image == nil) ? .noImage : .imageOnly
         // An image-only status item is invisible to VoiceOver without this.
         button.setAccessibilityLabel(label)
-        button.toolTip = isEnabled
+        button.setAccessibilityHelp("Click to turn lid-closed stay-awake on or off. Option-click for Keep Me Awake. Right-click for the menu.")
+        var tip = isEnabled
             ? "Staying awake — this Mac won’t sleep, even with the lid closed"
             : "Normal — this Mac sleeps when idle or when the lid is closed"
+        if let summary = autoOffSummary { tip += " (turns off \(summary))" }
+        if KeepAwake.isOn { tip += "\nKeep Me Awake is on (lid must stay open)" }
+        tip += "\nClick to toggle · option-click for Keep Me Awake · right-click for the menu"
+        button.toolTip = tip
     }
 
-    private static func menuBarImage(named name: String, label: String) -> NSImage? {
+    /// Keep Me Awake tint. The menu bar is dark in Dark Mode and light in Light
+    /// Mode, and one light orange can't read on both — so go pale on a dark bar and
+    /// a shade deeper on a light one, where a pale orange washes out.
+    private static let tintOnDarkBar  = NSColor(srgbRed: 1.00, green: 0.76, blue: 0.45, alpha: 1)
+    private static let tintOnLightBar = NSColor(srgbRed: 0.95, green: 0.58, blue: 0.18, alpha: 1)
+
+    private static func menuBarImage(named name: String, label: String, tint: NSColor?) -> NSImage? {
         guard let url = Bundle.module.url(forResource: name, withExtension: "png"),
-              let image = NSImage(contentsOf: url) else {
+              let base = NSImage(contentsOf: url) else {
             NSLog("Clamshelled: missing menu-bar asset \(name).png — using fallback")
             return nil
         }
-        image.size = NSSize(width: 18, height: 18)
-        image.isTemplate = true
-        image.accessibilityDescription = label
-        return image
+        base.size = NSSize(width: 18, height: 18)
+        guard let tint else {
+            base.isTemplate = true       // macOS recolours it for light/dark menu bars
+            base.accessibilityDescription = label
+            return base
+        }
+        // A template image is recoloured by the system, so a tinted one can't be one.
+        // sourceAtop paints only where the glyph already is, keeping the alpha shape.
+        let tinted = NSImage(size: base.size)
+        tinted.lockFocus()
+        let rect = NSRect(origin: .zero, size: base.size)
+        base.draw(in: rect)
+        tint.set()
+        rect.fill(using: .sourceAtop)
+        tinted.unlockFocus()
+        tinted.accessibilityDescription = label
+        return tinted
     }
 
-    private func updateMenu() {
+    /// Built fresh each time it's opened, so it never shows stale state.
+    private func buildMenu() -> NSMenu {
         let menu = NSMenu()
 
         // Be honest: `disablesleep 1` stops ALL sleep, not just the lid-closed kind.
-        let header = NSMenuItem(
-            title: isEnabled ? "Never sleeps — lid can stay closed" : "Sleeps normally",
-            action: nil, keyEquivalent: "")
+        var headerTitle: String
+        if isEnabled            { headerTitle = "Never sleeps — lid can stay closed" }
+        else if KeepAwake.isOn  { headerTitle = "Staying awake — but only with the lid open" }
+        else                    { headerTitle = "Sleeps normally" }
+        if let summary = autoOffSummary { headerTitle += " · off \(summary)" }
+        let header = NSMenuItem(title: headerTitle, action: nil, keyEquivalent: "")
         header.isEnabled = false
         menu.addItem(header)
 
-        if isEnabled {
+        if isEnabled || KeepAwake.isOn {
             let warn = NSMenuItem(title: "Uses more battery — turn off when done",
                                   action: nil, keyEquivalent: "")
             warn.isEnabled = false
@@ -428,26 +563,29 @@ final class AppController: NSObject, NSApplicationDelegate {
                                     action: #selector(toggle), keyEquivalent: "k")
         toggleItem.target = self
         toggleItem.state = isEnabled ? .on : .off
+        toggleItem.toolTip = "Same as clicking the menu-bar icon. Needs the privileged helper."
         menu.addItem(toggleItem)
+
+        let awakeItem = NSMenuItem(title: "Keep Me Awake",
+                                   action: #selector(toggleKeepAwake), keyEquivalent: "a")
+        awakeItem.target = self
+        awakeItem.state = KeepAwake.isOn ? .on : .off
+        awakeItem.toolTip = "Option-click the menu-bar icon does this too. Stops idle sleep while Clamshelled runs; ends when you quit, and the lid still has to stay open."
+        menu.addItem(awakeItem)
 
         menu.addItem(.separator())
 
-        let loginItem = NSMenuItem(title: "Launch at Login",
-                                   action: #selector(toggleLoginItem), keyEquivalent: "")
-        loginItem.target = self
-        loginItem.state = (SMAppService.mainApp.status == .enabled) ? .on : .off
-        menu.addItem(loginItem)
+        // Version, author, GitHub, Launch at Login and the helper all live in
+        // Settings now — the menu is for the two things you actually click.
+        let settingsItem = NSMenuItem(title: "Settings…",
+                                      action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
 
-        let aboutItem = NSMenuItem(title: "What Is This?",
+        let aboutItem = NSMenuItem(title: "About Clamshelled",
                                    action: #selector(showAbout), keyEquivalent: "")
         aboutItem.target = self
         menu.addItem(aboutItem)
-
-        let helperItem = NSMenuItem(title: HelperClient.isEnabled ? "Privileged Helper (Installed)"
-                                                                 : "Install Privileged Helper…",
-                                    action: #selector(manageHelper), keyEquivalent: "")
-        helperItem.target = self
-        menu.addItem(helperItem)
 
         menu.addItem(.separator())
 
@@ -456,21 +594,6 @@ final class AppController: NSObject, NSApplicationDelegate {
         quitItem.target = self
         menu.addItem(quitItem)
 
-        menu.addItem(.separator())
-        let versionItem = NSMenuItem(title: "Version \(Self.displayVersion)",
-                                     action: nil, keyEquivalent: "")
-        versionItem.isEnabled = false
-        menu.addItem(versionItem)
-
-        let authorItem = NSMenuItem(title: "Brandon Walter", action: nil, keyEquivalent: "")
-        authorItem.isEnabled = false
-        menu.addItem(authorItem)
-
-        let githubItem = NSMenuItem(title: "GitHub: @EchoParkBaby",
-                                    action: #selector(openGitHub), keyEquivalent: "")
-        githubItem.target = self
-        menu.addItem(githubItem)
-
-        statusItem.menu = menu
+        return menu
     }
 }
