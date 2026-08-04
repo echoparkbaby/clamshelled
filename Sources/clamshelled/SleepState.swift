@@ -17,12 +17,11 @@ func parseSleepDisabled(_ output: String) -> Bool? {
     return nil // key absent — caller decides (macOS omits it when unset)
 }
 
-/// Reads the live SleepDisabled value. Unprivileged — no helper needed.
-/// nil = couldn't determine (pmset failed / unrecognised output) — NOT "off".
-func readDisableSleep() -> Bool? {
+/// Runs pmset and returns its output. nil = couldn't launch or exited non-zero.
+func runPmset(_ arguments: [String]) -> String? {
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
-    p.arguments = ["-g"]
+    p.arguments = arguments
     let pipe = Pipe()
     p.standardOutput = pipe
     p.standardError = pipe
@@ -35,7 +34,17 @@ func readDisableSleep() -> Bool? {
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     p.waitUntilExit()
     guard p.terminationStatus == 0 else { return nil }
-    return parseSleepDisabled(String(data: data, encoding: .utf8) ?? "")
+    // Lossy on purpose. pmset's output is not guaranteed valid UTF-8 — it mangles
+    // non-ASCII in assertion names — and a strict decode returns nil for the WHOLE
+    // blob over one bad byte, which silently looks like "pmset told us nothing".
+    return String(decoding: data, as: UTF8.self)
+}
+
+/// Reads the live SleepDisabled value. Unprivileged — no helper needed.
+/// nil = couldn't determine (pmset failed / unrecognised output) — NOT "off".
+func readDisableSleep() -> Bool? {
+    guard let output = runPmset(["-g"]) else { return nil }
+    return parseSleepDisabled(output)
 }
 
 /// `--self-test`: runnable checks for the parser and the Keep Me Awake assertion.
@@ -62,14 +71,26 @@ func runSelfTest() -> Never {
     precondition(parseSleepDisabled("SleepDisabledExtra 1") == nil, "prefix must not match")
     print("✓ parseSleepDisabled: all checks passed")
 
-    // Real round trip against IOKit — catches bad assertion arguments, which is the
-    // only way KeepAwake can fail.
+    // Real round trip against IOKit — catches bad assertion arguments.
     precondition(KeepAwake.isOn == false, "starts off")
     precondition(KeepAwake.set(true), "IOKit refused the assertion")
     precondition(KeepAwake.isOn, "should report on")
+
+    // Ask the system what it thinks we asserted. This is the check that matters:
+    // "create succeeded" says nothing about WHICH sleep got prevented, and
+    // PreventUserIdleSystemSleep keeps the machine awake while letting the screen
+    // go dark — which shipped once and is not what "Keep Me Awake" means.
+    let assertions = runPmset(["-g", "assertions"]) ?? ""
+    let ours = assertions.split(separator: "\n").filter { $0.contains(KeepAwake.assertionName) }
+    precondition(!ours.isEmpty, "system doesn't list our assertion at all:\n\(assertions)")
+    precondition(ours.contains { $0.contains("PreventUserIdleDisplaySleep") },
+                 "assertion does not prevent DISPLAY sleep — the screen will still go dark:\n\(ours.joined(separator: "\n"))")
+
     precondition(KeepAwake.set(true), "re-enabling is a no-op, not an error")
     precondition(KeepAwake.set(false), "release failed")
     precondition(KeepAwake.isOn == false, "should report off")
-    print("✓ KeepAwake: assertion create/release round trip passed")
+    precondition(!(runPmset(["-g", "assertions"]) ?? "").contains(KeepAwake.assertionName),
+                 "assertion outlived its release")
+    print("✓ KeepAwake: holds a display-sleep assertion, and releases it")
     exit(0)
 }

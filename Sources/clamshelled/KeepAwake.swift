@@ -10,6 +10,10 @@ import IOKit.pwr_mgt
 enum KeepAwake {
     private static var assertionID: IOPMAssertionID = 0
 
+    /// Also how `pmset -g assertions` labels us, which the self-test greps for.
+    /// Plain ASCII on purpose — pmset mangles non-ASCII in that listing.
+    static let assertionName = "Clamshelled: Keep Me Awake"
+
     static var isOn: Bool { assertionID != 0 }
 
     /// Returns false if the assertion couldn't be created — the caller reports it
@@ -23,10 +27,14 @@ enum KeepAwake {
             return ok
         }
         var id: IOPMAssertionID = 0
+        // Display sleep, NOT system sleep. PreventUserIdleSystemSleep keeps the
+        // machine running but explicitly lets the screen go dark, which is not what
+        // anyone means by "Keep Me Awake". Preventing display sleep covers both:
+        // powerd holds its own "prevent sleep while display is on" assertion.
         let result = IOPMAssertionCreateWithName(
-            kIOPMAssertionTypePreventUserIdleSystemSleep as CFString,
+            kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
             IOPMAssertionLevel(kIOPMAssertionLevelOn),
-            "Clamshelled — Keep Me Awake" as CFString,
+            assertionName as CFString,
             &id)
         guard result == kIOReturnSuccess else { return false }
         assertionID = id
