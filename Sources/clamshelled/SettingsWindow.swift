@@ -162,7 +162,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         ])
 
         let name = NSTextField(labelWithString: "Clamshelled \(AppController.displayVersion)")
-        name.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        name.font = .preferredFont(forTextStyle: .headline)
 
         let links = NSStackView(views: [
             link("GitHub: @EchoParkBaby", #selector(openGitHub)),
@@ -192,9 +192,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         NSButton(checkboxWithTitle: title, target: self, action: action)
     }
 
+    /// Text styles rather than fixed point sizes, so the window follows the system
+    /// text-size setting instead of pinning itself to 13pt forever.
     private func heading(_ title: String) -> NSTextField {
         let label = NSTextField(labelWithString: title)
-        label.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        label.font = .preferredFont(forTextStyle: .headline)
         return label
     }
 
@@ -202,7 +204,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// unconstrained label in a stack view lays out as one very long line.
     private func caption(_ text: String) -> NSTextField {
         let label = NSTextField(wrappingLabelWithString: text)
-        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.font = .preferredFont(forTextStyle: .caption1)
         label.textColor = .secondaryLabelColor
         label.isSelectable = false
         label.preferredMaxLayoutWidth = Self.textWidth

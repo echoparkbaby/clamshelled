@@ -21,6 +21,13 @@ private final class OneShot<T: Sendable>: @unchecked Sendable {
     }
 }
 
+/// A Sendable error carrying just the message — enough for every alert we show, and
+/// `Result<Void, any Error>` isn't Sendable so it can't cross a continuation.
+struct HelperError: LocalizedError, Sendable {
+    let message: String
+    var errorDescription: String? { message }
+}
+
 /// Everything the app knows about its privileged helper.
 ///
 /// All calls are asynchronous with a bounded timeout: a wedged helper must never
@@ -112,12 +119,27 @@ enum HelperClient {
 
     /// Unregister and wait for launchd to confirm — registering again before the old
     /// job is gone is exactly how a stale root helper survives an update.
+    ///
+    /// Bounded, like every other call here: launchd not calling back must surface as
+    /// a failure the user sees, not a Task that never finishes.
+    static let unregisterTimeout: Duration = .seconds(30)
+
     static func unregister() async throws {
-        try await withCheckedThrowingContinuation { (c: CheckedThrowingContinuation) in
+        let result: Result<Void, HelperError> = await withCheckedContinuation { continuation in
+            let shot = OneShot<Result<Void, HelperError>>(continuation)
             service.unregister { error in
-                if let error { c.resume(throwing: error) } else { c.resume() }
+                if let error {
+                    shot.fire(.failure(HelperError(message: error.localizedDescription)))
+                } else {
+                    shot.fire(.success(()))
+                }
+            }
+            Task {
+                try? await Task.sleep(for: unregisterTimeout)
+                shot.fire(.failure(HelperError(message: "Timed out waiting for launchd.")))
             }
         }
+        try result.get()
     }
 
     /// Replacing the app does NOT restart an already-running helper, so an old root
@@ -144,5 +166,3 @@ enum HelperClient {
         }
     }
 }
-
-private typealias CheckedThrowingContinuation = CheckedContinuation<Void, Error>

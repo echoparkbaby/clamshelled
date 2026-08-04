@@ -25,7 +25,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private var statusItem: NSStatusItem!
-    private var pollTimer: Timer?
+    private var pollTask: Task<Void, Never>?
     /// true → sleep is disabled (Mac stays awake when the lid closes).
     private var isEnabled = false
     /// The toggle is a round trip to a root daemon; a second click mid-flight would
@@ -43,7 +43,11 @@ final class AppController: NSObject, NSApplicationDelegate {
         settings.onAutoOffChanged = { [weak self] in self?.armAutoOff(); self?.updateIcon() }
         settings.onToggleLoginItem = { [weak self] in self?.toggleLoginItem() }
         settings.onManageHelper = { [weak self] in self?.manageHelper() }
-        if Settings.keepAwakeAtLaunch { KeepAwake.set(true) }
+        // Don't swallow this: the user asked for it in Settings, and a silent failure
+        // leaves the checkbox ticked with nothing behind it.
+        if Settings.keepAwakeAtLaunch, !KeepAwake.set(true) {
+            NSLog("Clamshelled: Keep Me Awake at launch failed — IOKit refused the assertion")
+        }
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.imagePosition = .imageOnly
@@ -54,8 +58,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         statusItem.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         refreshState()
         // Reflect changes made elsewhere (e.g. someone runs pmset in a terminal).
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.refreshState() }
+        // A task loop rather than a Timer: a default-mode timer stops firing while a
+        // modal alert or menu tracking loop is up, which is precisely when auto-off
+        // must still be able to fire.
+        pollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                self?.refreshState()
+            }
         }
         // An app update leaves the OLD root helper running; swap it out.
         Task { await HelperClient.reregisterIfStale() }
@@ -82,8 +92,9 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// Right (or control) click = the menu — control-click is the same gesture as
     /// right-click on a trackpad, so both have to land here.
     @objc private func statusItemClicked() {
-        let flags = NSApp.currentEvent?.modifierFlags ?? []
-        if NSApp.currentEvent?.type == .rightMouseUp || flags.contains(.control) {
+        let event = NSApp.currentEvent   // read once: two reads could disagree
+        let flags = event?.modifierFlags ?? []
+        if event?.type == .rightMouseUp || flags.contains(.control) {
             showMenu()
         } else if flags.contains(.option) {
             toggleKeepAwake()
@@ -105,14 +116,18 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func armAutoOff() {
         let minutes = Settings.autoOffMinutes
         autoOffDeadline = (isEnabled && minutes > 0)
-            ? Date().addingTimeInterval(Double(minutes) * 60)
+            ? Date.now.addingTimeInterval(Double(minutes) * 60)
             : nil
     }
 
     private func fireAutoOffIfDue() {
-        guard isEnabled, let deadline = autoOffDeadline, Date() >= deadline else { return }
+        guard isEnabled, let deadline = autoOffDeadline, Date.now >= deadline else { return }
+        // Bail out BEFORE clearing the deadline. refreshState() only re-arms on an
+        // off→on transition, which has long since happened, so dropping it here
+        // would disarm the safety net permanently — silently, and exactly when the
+        // helper is unavailable or busy.
+        guard HelperClient.isEnabled, !toggleInFlight else { return }  // retry next tick
         autoOffDeadline = nil   // one shot; a failed attempt shouldn't loop every 5s
-        guard HelperClient.isEnabled, !toggleInFlight else { return }
         toggleInFlight = true
         Task {
             let result = await HelperClient.setDisableSleep(false)
@@ -125,12 +140,13 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     /// "in 47 min" / "in 2 hr 5 min", or nil when nothing is scheduled.
+    /// Rounds up so a countdown never reads "in 0 min" while it's still running.
     private var autoOffSummary: String? {
         guard let deadline = autoOffDeadline else { return nil }
         let minutes = max(0, Int((deadline.timeIntervalSinceNow / 60).rounded(.up)))
-        if minutes < 60 { return "in \(minutes) min" }
-        let (hours, rest) = (minutes / 60, minutes % 60)
-        return rest == 0 ? "in \(hours) hr" : "in \(hours) hr \(rest) min"
+        let remaining = Duration.seconds(minutes * 60)
+        return "in " + remaining.formatted(.units(allowed: [.hours, .minutes],
+                                                  width: .abbreviated))
     }
 
     /// Attach the menu just long enough to click it open. `performClick` runs the
@@ -160,12 +176,15 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleKeepAwake() {
-        guard KeepAwake.set(!KeepAwake.isOn) else {
+        let ok = KeepAwake.set(!KeepAwake.isOn)
+        // Always redraw, even on failure: a failed release still clears the assertion
+        // ID, so bailing out early would leave a tinted icon over an inactive state.
+        updateIcon()   // tooltip carries the state; the menu is rebuilt on next open
+        guard ok else {
             presentError(title: "Couldn’t change Keep Me Awake",
                          body: "macOS refused the power assertion. Try again, or restart Clamshelled.")
             return
         }
-        updateIcon()   // tooltip carries the state; the menu is rebuilt on next open
     }
 
     @objc private func toggleLoginItem() {
@@ -484,9 +503,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         // Colour is a second axis on the same two shapes: shape = lid-closed mode,
         // tint = Keep Me Awake. Never the only cue — the label and menu say it too.
         let onDarkBar = button.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-        let tint = (KeepAwake.isOn && Settings.tintWhenKeepAwake)
-            ? (onDarkBar ? Self.tintOnDarkBar : Self.tintOnLightBar)
-            : nil
+        let tint: IconTint = (KeepAwake.isOn && Settings.tintWhenKeepAwake)
+            ? (onDarkBar ? .darkBar : .lightBar)
+            : .template
         button.image = Self.menuBarImage(named: asset, label: label, tint: tint)
             ?? NSImage(systemSymbolName: isEnabled ? "zzz" : "laptopcomputer",
                        accessibilityDescription: label)
@@ -497,6 +516,20 @@ final class AppController: NSObject, NSApplicationDelegate {
         // An image-only status item is invisible to VoiceOver without this.
         button.setAccessibilityLabel(label)
         button.setAccessibilityHelp("Click to turn lid-closed stay-awake on or off. Option-click for Keep Me Awake. Right-click for the menu.")
+        // Option-click and right-click are mouse-only gestures, and statusItem.menu
+        // is nil except while the menu is open — so without these, everything but
+        // the main toggle is unreachable with VoiceOver.
+        button.setAccessibilityCustomActions([
+            NSAccessibilityCustomAction(name: "Show Menu") { [weak self] in
+                MainActor.assumeIsolated { self?.showMenu() }
+                return true
+            },
+            NSAccessibilityCustomAction(name: KeepAwake.isOn ? "Turn Off Keep Me Awake"
+                                                             : "Turn On Keep Me Awake") { [weak self] in
+                MainActor.assumeIsolated { self?.toggleKeepAwake() }
+                return true
+            },
+        ])
         var tip = isEnabled
             ? "Staying awake — this Mac won’t sleep, even with the lid closed"
             : "Normal — this Mac sleeps when idle or when the lid is closed"
@@ -509,32 +542,54 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// Keep Me Awake tint. The menu bar is dark in Dark Mode and light in Light
     /// Mode, and one light orange can't read on both — so go pale on a dark bar and
     /// a shade deeper on a light one, where a pale orange washes out.
-    private static let tintOnDarkBar  = NSColor(srgbRed: 1.00, green: 0.76, blue: 0.45, alpha: 1)
-    private static let tintOnLightBar = NSColor(srgbRed: 0.95, green: 0.58, blue: 0.18, alpha: 1)
+    private enum IconTint: String {
+        case template, darkBar, lightBar
 
-    private static func menuBarImage(named name: String, label: String, tint: NSColor?) -> NSImage? {
+        var color: NSColor? {
+            switch self {
+            case .template: nil
+            case .darkBar:  NSColor(srgbRed: 1.00, green: 0.76, blue: 0.45, alpha: 1)
+            case .lightBar: NSColor(srgbRed: 0.95, green: 0.58, blue: 0.18, alpha: 1)
+            }
+        }
+    }
+
+    /// There are only four possible icons, and updateIcon() runs on every 5s poll —
+    /// without this it re-read the PNG from disk and re-composited it 12×/minute.
+    private static var iconCache: [String: NSImage] = [:]
+
+    private static func menuBarImage(named name: String, label: String, tint: IconTint) -> NSImage? {
+        let key = "\(name)|\(tint.rawValue)"
+        if let cached = iconCache[key] {
+            cached.accessibilityDescription = label   // varies independently of the art
+            return cached
+        }
         guard let url = Bundle.module.url(forResource: name, withExtension: "png"),
               let base = NSImage(contentsOf: url) else {
             NSLog("Clamshelled: missing menu-bar asset \(name).png — using fallback")
             return nil
         }
         base.size = NSSize(width: 18, height: 18)
-        guard let tint else {
+
+        let image: NSImage
+        if let color = tint.color {
+            // A template image is recoloured by the system, so a tinted one can't be
+            // one. sourceAtop paints only where the glyph is, keeping the alpha shape.
+            let tinted = NSImage(size: base.size)
+            tinted.lockFocus()
+            let rect = NSRect(origin: .zero, size: base.size)
+            base.draw(in: rect)
+            color.set()
+            rect.fill(using: .sourceAtop)
+            tinted.unlockFocus()
+            image = tinted
+        } else {
             base.isTemplate = true       // macOS recolours it for light/dark menu bars
-            base.accessibilityDescription = label
-            return base
+            image = base
         }
-        // A template image is recoloured by the system, so a tinted one can't be one.
-        // sourceAtop paints only where the glyph already is, keeping the alpha shape.
-        let tinted = NSImage(size: base.size)
-        tinted.lockFocus()
-        let rect = NSRect(origin: .zero, size: base.size)
-        base.draw(in: rect)
-        tint.set()
-        rect.fill(using: .sourceAtop)
-        tinted.unlockFocus()
-        tinted.accessibilityDescription = label
-        return tinted
+        image.accessibilityDescription = label
+        iconCache[key] = image
+        return image
     }
 
     /// Built fresh each time it's opened, so it never shows stale state.
